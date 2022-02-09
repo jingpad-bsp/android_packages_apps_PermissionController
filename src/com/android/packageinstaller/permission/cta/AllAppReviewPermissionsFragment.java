@@ -14,7 +14,9 @@
 * limitations under the License.
 */
 
-package com.android.packageinstaller.permission.ui.handheld;
+package com.android.packageinstaller.permission.cta;
+
+import static android.Manifest.permission_group.SMS;
 
 import android.app.ActionBar;
 import android.app.AlertDialog;
@@ -36,49 +38,51 @@ import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.MenuItem;
+import android.view.View;
 import android.widget.Switch;
 
 import androidx.annotation.NonNull;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceCategory;
 import androidx.preference.PreferenceGroup;
+import androidx.preference.PreferenceViewHolder;
+import androidx.preference.SwitchPreference;
 
 import com.android.packageinstaller.permission.model.AppPermissionGroup;
 import com.android.packageinstaller.permission.model.Permission;
+import com.android.packageinstaller.permission.ui.handheld.SettingsWithLargeHeader;
 import com.android.packageinstaller.permission.utils.ArrayUtils;
 import com.android.packageinstaller.permission.utils.Utils;
 import com.android.permissioncontroller.R;
-
 import java.util.ArrayList;
+import java.text.Collator;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
-
-// CTA Feature: package for cta @{
-import android.cta.PermissionUtils;
-// @}
 
 /**
  * Show and manage individual permissions for an app.
  *
  * <p>Shows the list of individual runtime and non-runtime permissions the app has requested.
  */
-public final class AllAppPermissionsFragment extends SettingsWithLargeHeader {
+public final class AllAppReviewPermissionsFragment extends SettingsWithLargeHeader {
 
-    private static final String LOG_TAG = "AllAppPermissionsFragment";
+    private static final String LOG_TAG = "AllAppReviewPermissionsFragment";
 
     private static final String KEY_OTHER = "other_perms";
 
+    private Collator mCollator;
+
     private List<AppPermissionGroup> mGroups;
 
-    public static AllAppPermissionsFragment newInstance(@NonNull String packageName,
+    public static AllAppReviewPermissionsFragment newInstance(@NonNull String packageName,
             @NonNull UserHandle userHandle) {
         return newInstance(packageName, null, userHandle);
     }
 
-    public static AllAppPermissionsFragment newInstance(@NonNull String packageName,
+    public static AllAppReviewPermissionsFragment newInstance(@NonNull String packageName,
             @NonNull String filterGroup, @NonNull UserHandle userHandle) {
-        AllAppPermissionsFragment instance = new AllAppPermissionsFragment();
+        AllAppReviewPermissionsFragment instance = new AllAppReviewPermissionsFragment();
         Bundle arguments = new Bundle();
         arguments.putString(Intent.EXTRA_PACKAGE_NAME, packageName);
         arguments.putString(Intent.EXTRA_PERMISSION_GROUP_NAME, filterGroup);
@@ -92,6 +96,10 @@ public final class AllAppPermissionsFragment extends SettingsWithLargeHeader {
         super.onStart();
 
         final ActionBar ab = getActivity().getActionBar();
+
+        mCollator = Collator.getInstance(
+                getContext().getResources().getConfiguration().getLocales().get(0));
+
         if (ab != null) {
             // If we target a group make this look like app permissions.
             if (getArguments().getString(Intent.EXTRA_PERMISSION_GROUP_NAME) == null) {
@@ -99,10 +107,9 @@ public final class AllAppPermissionsFragment extends SettingsWithLargeHeader {
             } else {
                 ab.setTitle(R.string.app_permissions);
             }
-            ab.setDisplayHomeAsUpEnabled(true);
+            ab.setDisplayHomeAsUpEnabled(false);
+            setHasOptionsMenu(false);
         }
-
-        setHasOptionsMenu(true);
 
         updateUi();
     }
@@ -141,7 +148,7 @@ public final class AllAppPermissionsFragment extends SettingsWithLargeHeader {
             final CharSequence label = appInfo.loadLabel(pm);
             Intent infoIntent = null;
             if (!getActivity().getIntent().getBooleanExtra(
-                    AppPermissionsFragment.EXTRA_HIDE_INFO_BUTTON, false)) {
+                    "hideInfoButton", false)) {
                 infoIntent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
                         .setData(Uri.fromParts("package", pkg, null));
             }
@@ -204,6 +211,7 @@ public final class AllAppPermissionsFragment extends SettingsWithLargeHeader {
         } catch (NameNotFoundException e) {
             Log.e(LOG_TAG, "Problem getting package info for " + pkg, e);
         }
+
         // Sort an ArrayList of the groups and then set the order from the sorting.
         Collections.sort(prefs, new Comparator<Preference>() {
             @Override
@@ -218,7 +226,7 @@ public final class AllAppPermissionsFragment extends SettingsWithLargeHeader {
                         != Utils.isModernPermissionGroup(rKey)) {
                     return Utils.isModernPermissionGroup(lKey) ? -1 : 1;
                 }
-                return lhs.getTitle().toString().compareTo(rhs.getTitle().toString());
+                return mCollator.compare(lhs.getTitle().toString(), rhs.getTitle().toString());
             }
         });
         for (int i = 0; i < prefs.size(); i++) {
@@ -327,77 +335,74 @@ public final class AllAppPermissionsFragment extends SettingsWithLargeHeader {
         return appPermissionGroup;
     }
 
-    private static final class MyMultiTargetSwitchPreference extends MultiTargetSwitchPreference {
+    private static final class MyMultiTargetSwitchPreference extends SwitchPreference {
+        private View.OnClickListener mSwitchOnClickLister;
+        private OnPreferenceChangeListener mSwitchChangeListener;
+
         MyMultiTargetSwitchPreference(Context context, String permission,
                 AppPermissionGroup appPermissionGroup) {
             super(context);
 
-            setChecked(appPermissionGroup.areRuntimePermissionsGranted(
-                    new String[] {permission}));
+            setChecked(CtaPermissionPlus.
+                    isPermGrantedForReviewUI(appPermissionGroup.getPermission(permission)));
 
-            setSwitchOnClickListener(v -> {
-                Switch switchView = (Switch) v;
-                if (switchView.isChecked()) {
-                    appPermissionGroup.grantRuntimePermissions(false,
-                            new String[]{permission});
-                    // We are granting a permission from a group but since this is an
-                    // individual permission control other permissions in the group may
-                    // be revoked, hence we need to mark them user fixed to prevent the
-                    // app from requesting a non-granted permission and it being granted
-                    // because another permission in the group is granted. This applies
-                    // only to apps that support runtime permissions.
-                    if (appPermissionGroup.doesSupportRuntimePermissions()) {
-                        int grantedCount = 0;
-                        String[] revokedPermissionsToFix = null;
-                        final int permissionCount = appPermissionGroup.getPermissions().size();
-                        for (int i = 0; i < permissionCount; i++) {
-                            Permission current = appPermissionGroup.getPermissions().get(i);
-                            if (!current.isGrantedIncludingAppOp()) {
-                                if (!current.isUserFixed()) {
-                                    revokedPermissionsToFix = ArrayUtils.appendString(
-                                            revokedPermissionsToFix, current.getName());
-                                }
-                            } else {
-                                grantedCount++;
-                            }
-                        }
-                        if (revokedPermissionsToFix != null) {
-                            // If some permissions were not granted then they should be fixed.
-                            // CTA Feature: revoke not userfixed @{
-                            if (PermissionUtils.isCtaFeatureSupported()) {
-                                appPermissionGroup.revokeRuntimePermissions(false,
-                                        revokedPermissionsToFix);
-                            } else {
-                                appPermissionGroup.revokeRuntimePermissions(true,
-                                        revokedPermissionsToFix);
-
-                            }
-                            // @}
-                        } else if (appPermissionGroup.getPermissions().size() == grantedCount) {
-                            // If all permissions are granted then they should not be fixed.
-                            appPermissionGroup.grantRuntimePermissions(false);
-                        }
-                    }
-                } else {
-                    // CTA Feature: revoke not userfixed @{
-                    if (PermissionUtils.isCtaFeatureSupported()) {
-                        appPermissionGroup.revokeRuntimePermissions(false,
-                                new String[]{permission});
-                    } else {
-                        appPermissionGroup.revokeRuntimePermissions(true,
-                                new String[]{permission});
-                    }
-                    // @}
-
-                    // If we just revoked the last permission we need to clear
-                    // the user fixed state as now the app should be able to
-                    // request them at runtime if supported.
-                    if (appPermissionGroup.doesSupportRuntimePermissions()
-                            && !appPermissionGroup.areRuntimePermissionsGranted()) {
-                        appPermissionGroup.revokeRuntimePermissions(false);
-                    }
-                }
+            setSwitchChangeListener((pref, newValue) -> {
+                final boolean val = (Boolean) newValue;
+                // save the previous status
+                CtaPermissionPlus.setPermStateForReviewUI(appPermissionGroup.getPermission(permission),
+                        val ? PermissionState.STATE_ALLOWED : PermissionState.STATE_DENIED);
+                setCheckedOverride(newValue == Boolean.TRUE ? true : false);
+                return true;
             });
+        }
+
+        @Override
+        public void setChecked(boolean checked) {
+            // If double target behavior is enabled do nothing
+            if (mSwitchOnClickLister == null) {
+                super.setChecked(checked);
+            }
+        }
+
+        @Override
+        protected void onClick() {
+            if (mSwitchChangeListener == null) {
+                super.onClick();
+            }
+        }
+
+        @Override
+        public boolean callChangeListener(Object newValue) {
+            if (mSwitchChangeListener != null) {
+                mSwitchChangeListener.onPreferenceChange(this, newValue);
+            }
+            return super.callChangeListener(newValue);
+        }
+
+        public void setSwitchChangeListener(OnPreferenceChangeListener listener) {
+            mSwitchChangeListener = listener;
+        }
+
+        public void setSwitchOnClickListener(View.OnClickListener listener) {
+            mSwitchOnClickLister = listener;
+        }
+
+        public void setCheckedOverride(boolean checked) {
+            super.setChecked(checked);
+        }
+
+        @Override
+        public void onBindViewHolder(PreferenceViewHolder holder) {
+            super.onBindViewHolder(holder);
+            Switch switchView = holder.itemView.findViewById(android.R.id.switch_widget);
+            if (switchView != null) {
+                switchView.setOnClickListener(mSwitchOnClickLister);
+                if (mSwitchOnClickLister != null) {
+                    final int padding = (int) ((holder.itemView.getMeasuredHeight()
+                            - switchView.getMeasuredHeight()) / 2 + 0.5f);
+                    switchView.setPaddingRelative(padding, padding, 0, padding);
+                }
+            }
         }
     }
 }

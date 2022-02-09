@@ -307,4 +307,6 @@
     <string name="assistant_record_audio_user_sensitive_title" msgid="4527980682419054323">"显示 Google 助理触发指令检测结果"</string>
     <string name="assistant_record_audio_user_sensitive_summary" msgid="4952742951700902553">"使用麦克风激活语音助理后，在状态栏中显示相关图标"</string>
     <string name="permgrouprequest_storage_isolated" msgid="6769845877344258537">"要允许&lt;b&gt;<xliff:g id="APP_NAME">%1$s</xliff:g>&lt;/b&gt;访问您设备上的照片和媒体吗？"</string>
+    <!--cta-->
+    <string name="display_revoke_permissions">包含:</string>
 </resources>

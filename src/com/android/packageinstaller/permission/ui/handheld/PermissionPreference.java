@@ -49,6 +49,14 @@ import com.android.settingslib.RestrictedLockUtils.EnforcedAdmin;
 import java.lang.annotation.Retention;
 import java.util.List;
 
+// CTA Feature: modify reviewui @{
+import com.android.packageinstaller.permission.cta.CtaPermissionPlus;
+import android.cta.PermissionUtils;
+import android.widget.LinearLayout;
+import android.view.View;
+import android.view.ViewGroup;
+// @}
+
 /**
  * A preference for representing a permission group requested by an app.
  */
@@ -65,6 +73,10 @@ class PermissionPreference extends MultiTargetSwitchPreference {
     private final PermissionPreferenceChangeListener mCallBacks;
     private final @LayoutRes int mOriginalWidgetLayoutRes;
     private final int mIconSize;
+
+    // CTA Feature: Add mGroupButton to hide the reviewUI button @{
+    private final LinearLayout mGroupButton;
+    // @}
 
     /** Callbacks for the permission to the fragment showing a list of permissions */
     interface PermissionPreferenceChangeListener {
@@ -129,7 +141,26 @@ class PermissionPreference extends MultiTargetSwitchPreference {
         mCallBacks = callbacks;
         mOriginalWidgetLayoutRes = getWidgetLayoutResource();
         mIconSize = iconSize;
+        // CTA Feature: The mGroupButton default value is empty when CTA Feature is not supported @{
+        mGroupButton = null;
+        // @}
+        setPersistent(false);
+        updateUi();
+    }
 
+    // CTA Feature:  Review Permissions UI@{
+    PermissionPreference(PreferenceFragmentCompat fragment, AppPermissionGroup group,
+                         PermissionPreferenceChangeListener callbacks, int iconSize, LinearLayout layoutView) {
+        super(fragment.getPreferenceManager().getContext());
+
+        mFragment = fragment;
+        mGroup = group;
+        mCallBacks = callbacks;
+        mOriginalWidgetLayoutRes = getWidgetLayoutResource();
+        mIconSize = iconSize;
+        // CTA Feature: The mGroupButton default value is empty when CTA Feature is not supported @{
+        mGroupButton = layoutView;
+        // @}
         setPersistent(false);
         updateUi();
     }
@@ -620,6 +651,15 @@ class PermissionPreference extends MultiTargetSwitchPreference {
      * @see #showDefaultDenyDialog(int)
      */
     void onDenyAnyWay(@ChangeTarget int changeTarget) {
+        // CTA Feature:  @{
+        if (PermissionUtils.isCtaFeatureSupported()) {
+            mCallBacks.hasConfirmDefaultPermissionRevoke();
+            setChecked(false);
+            CtaPermissionPlus.setPermGroupStateForReviewUI(mGroup, false);
+            return;
+        }
+        // @}
+
         mCallBacks.onPreferenceChanged(getKey());
 
         boolean hasDefaultPermissions = false;
@@ -732,4 +772,36 @@ class PermissionPreference extends MultiTargetSwitchPreference {
             return b.create();
         }
     }
+
+    // CTA Feature: review ui @{
+    void updateCtaUi() {
+        setChecked(CtaPermissionPlus.isPermGroupGrantedForReviewUI(mGroup));
+        setSummary(mGroup.getDescription());
+        setPersistent(false);
+
+        setOnPreferenceChangeListener((pref, newValue) ->
+                requestCtaChange((Boolean) newValue, CHANGE_BOTH));
+
+        if (mGroup.isPolicyFixed()) {
+            setEnabled(false);
+            setSummary(getContext().getString(R.string.permission_summary_enforced_by_policy));
+        } else {
+            setEnabled(true);
+        }
+    }
+
+    private boolean requestCtaChange(boolean requestGrant, @ChangeTarget int changeTarget) {
+        if (!mCallBacks.shouldConfirmDefaultPermissionRevoke()) {
+            CtaPermissionPlus.setPermGroupStateForReviewUI(mGroup, requestGrant);
+            return true;
+        }
+        if (isChecked()) {
+            showDefaultDenyDialog(changeTarget);
+        } else {
+            CtaPermissionPlus.setPermGroupStateForReviewUI(mGroup, true);
+            return true;
+        }
+        return false;
+    }
+    // @}
 }

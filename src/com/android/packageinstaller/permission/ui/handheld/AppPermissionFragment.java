@@ -99,6 +99,8 @@ public class AppPermissionFragment extends SettingsWithLargeHeader {
     private @NonNull ViewGroup mWidgetFrame;
     private @NonNull TextView mPermissionDetails;
     private @NonNull NestedScrollView mNestedScrollView;
+    private @NonNull Activity mActivity;
+    private @NonNull DefaultDenyDialog mDenyDialog;
 
     private boolean mHasConfirmedRevoke;
 
@@ -139,17 +141,22 @@ public class AppPermissionFragment extends SettingsWithLargeHeader {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setHasOptionsMenu(true);
-        ActionBar ab = getActivity().getActionBar();
+        // UNISOC: Fix for Bug1128375, get/save activity instance for later use
+        mActivity = getActivity();
+        ActionBar ab = mActivity.getActionBar();
         if (ab != null) {
             ab.setDisplayHomeAsUpEnabled(true);
         }
 
         mHasConfirmedRevoke = false;
 
+        // UNISOC: Fix for Bug1128375, create dialog instance here avoiding memory leak
+        mDenyDialog = new DefaultDenyDialog();
+
         createAppPermissionGroup();
 
         if (mGroup != null) {
-            getActivity().setTitle(
+            mActivity.setTitle(
                     getPreferenceManager().getContext().getString(R.string.app_permission_title,
                             mGroup.getFullLabel()));
             logAppPermissionFragmentViewed();
@@ -157,7 +164,6 @@ public class AppPermissionFragment extends SettingsWithLargeHeader {
     }
 
     private void createAppPermissionGroup() {
-        Activity activity = getActivity();
         Context context = getPreferenceManager().getContext();
 
         String packageName = getArguments().getString(Intent.EXTRA_PACKAGE_NAME);
@@ -169,19 +175,19 @@ public class AppPermissionFragment extends SettingsWithLargeHeader {
         List<PermissionInfo> groupPermInfos = Utils.getGroupPermissionInfos(groupName, context);
         if (groupInfo == null || groupPermInfos == null) {
             Log.i(LOG_TAG, "Illegal group: " + groupName);
-            activity.setResult(Activity.RESULT_CANCELED);
-            activity.finish();
+            mActivity.setResult(Activity.RESULT_CANCELED);
+            mActivity.finish();
             return;
         }
         UserHandle userHandle = getArguments().getParcelable(Intent.EXTRA_USER);
         mGroup = AppPermissionGroup.create(context,
-                getPackageInfo(activity, packageName, userHandle),
+                getPackageInfo(mActivity, packageName, userHandle),
                 groupInfo, groupPermInfos, false);
 
         if (mGroup == null || !Utils.shouldShowPermission(context, mGroup)) {
             Log.i(LOG_TAG, "Illegal group: " + (mGroup == null ? "null" : mGroup.getName()));
-            activity.setResult(Activity.RESULT_CANCELED);
-            activity.finish();
+            mActivity.setResult(Activity.RESULT_CANCELED);
+            mActivity.finish();
             return;
         }
     }
@@ -257,18 +263,17 @@ public class AppPermissionFragment extends SettingsWithLargeHeader {
 
         String packageName = getArguments().getString(Intent.EXTRA_PACKAGE_NAME);
         UserHandle userHandle = getArguments().getParcelable(Intent.EXTRA_USER);
-        Activity activity = getActivity();
 
         // Get notified when permissions change.
         try {
             mPermissionChangeListener = new PermissionChangeListener(
                     mGroup.getApp().applicationInfo.uid);
         } catch (NameNotFoundException e) {
-            activity.setResult(Activity.RESULT_CANCELED);
-            activity.finish();
+            mActivity.setResult(Activity.RESULT_CANCELED);
+            mActivity.finish();
             return;
         }
-        PackageManager pm = activity.getPackageManager();
+        PackageManager pm = mActivity.getPackageManager();
         pm.addOnPermissionsChangeListener(mPermissionChangeListener);
 
         // Get notified when the package is removed.
@@ -276,27 +281,27 @@ public class AppPermissionFragment extends SettingsWithLargeHeader {
             @Override
             public void onPackageRemoved() {
                 Log.w(LOG_TAG, packageName + " was uninstalled");
-                activity.setResult(Activity.RESULT_CANCELED);
-                activity.finish();
+                mActivity.setResult(Activity.RESULT_CANCELED);
+                mActivity.finish();
             }
         };
         mPackageRemovalMonitor.register();
 
         // Check if the package was removed while this activity was not started.
         try {
-            activity.createPackageContextAsUser(
+            mActivity.createPackageContextAsUser(
                     packageName, 0, userHandle).getPackageManager().getPackageInfo(packageName, 0);
         } catch (NameNotFoundException e) {
             Log.w(LOG_TAG, packageName + " was uninstalled while this activity was stopped", e);
-            activity.setResult(Activity.RESULT_CANCELED);
-            activity.finish();
+            mActivity.setResult(Activity.RESULT_CANCELED);
+            mActivity.finish();
         }
 
         ActionBar ab = getActivity().getActionBar();
         if (ab != null) {
             ab.setElevation(0);
         }
-        ActionBarShadowController.attachToView(activity, getLifecycle(), mNestedScrollView);
+        ActionBarShadowController.attachToView(mActivity, getLifecycle(), mNestedScrollView);
 
         // Re-create the permission group in case permissions have changed and update the UI.
         createAppPermissionGroup();
@@ -325,6 +330,11 @@ public class AppPermissionFragment extends SettingsWithLargeHeader {
             getActivity().getPackageManager().removeOnPermissionsChangeListener(
                     mPermissionChangeListener);
             mPermissionChangeListener = null;
+        }
+
+        // UNISOC: Fix for Bug1128375, dismiss dialog when stop fragment
+        if(mDenyDialog.getDialog() != null) {
+            mDenyDialog.dismissAllowingStateLoss();
         }
     }
 
@@ -825,7 +835,12 @@ public class AppPermissionFragment extends SettingsWithLargeHeader {
             }
 
             if (showDefaultDenyDialog && !mHasConfirmedRevoke) {
-                showDefaultDenyDialog(changeTarget);
+                //*UNISOC: 1116336 fix crash with nullpointException
+                try {
+                    showDefaultDenyDialog(changeTarget);
+                } catch (Exception e) {
+                    Log.e(LOG_TAG, "Unable to show Default DenyDialog", e);
+                }
                 updateButtons();
                 return false;
             } else {
@@ -888,10 +903,9 @@ public class AppPermissionFragment extends SettingsWithLargeHeader {
                 : R.string.old_sdk_deny_warning);
         args.putInt(DefaultDenyDialog.CHANGE_TARGET, changeTarget);
 
-        DefaultDenyDialog defaultDenyDialog = new DefaultDenyDialog();
-        defaultDenyDialog.setArguments(args);
-        defaultDenyDialog.setTargetFragment(this, 0);
-        defaultDenyDialog.show(getFragmentManager().beginTransaction(),
+        mDenyDialog.setArguments(args);
+        mDenyDialog.setTargetFragment(this, 0);
+        mDenyDialog.show(getFragmentManager().beginTransaction(),
                 DefaultDenyDialog.class.getName());
     }
 

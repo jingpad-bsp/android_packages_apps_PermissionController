@@ -41,6 +41,11 @@ import com.android.permissioncontroller.R;
 
 import java.util.Random;
 
+// CTA Feature: modify reviewui @{
+import android.cta.PermissionUtils;
+import com.android.packageinstaller.permission.cta.AllAppReviewPermissionsFragment;
+// @}
+
 public final class ManagePermissionsActivity extends FragmentActivity {
     private static final String LOG_TAG = ManagePermissionsActivity.class.getSimpleName();
 
@@ -120,16 +125,30 @@ public final class ManagePermissionsActivity extends FragmentActivity {
                     fragment = com.android.packageinstaller.permission.ui.television
                             .AppPermissionsFragment.newInstance(packageName);
                 } else {
-                    if (allPermissions) {
-                        androidXFragment = com.android.packageinstaller.permission.ui.handheld
-                                .AllAppPermissionsFragment.newInstance(packageName, userHandle);
+                    // CTA Feature: Modify review ui @{
+                    if (PermissionUtils.isCtaFeatureSupported()) {
+                        boolean isFromReview = getIntent().getBooleanExtra("more_infobutton", false);
+                        if (isFromReview) {
+                            androidXFragment = AllAppReviewPermissionsFragment.newInstance(packageName, userHandle);
+                        } else {
+                            androidXFragment = com.android.packageinstaller.permission.ui.handheld
+                                    .AppPermissionsFragment.newInstance(
+                                            packageName, userHandle, sessionId);
+                        }
                     } else {
-                        androidXFragment = com.android.packageinstaller.permission.ui.handheld
-                                .AppPermissionsFragment.newInstance(
-                                        packageName, userHandle, sessionId);
+                        if (allPermissions) {
+                            androidXFragment = com.android.packageinstaller.permission.ui.handheld
+                                    .AllAppPermissionsFragment.newInstance(packageName, userHandle);
+                        } else {
+                            androidXFragment = com.android.packageinstaller.permission.ui.handheld
+                                    .AppPermissionsFragment.newInstance(
+                                            packageName, userHandle, sessionId);
+                        }
                     }
+                    // @}
                 }
-            } break;
+            }
+            break;
 
             case Intent.ACTION_MANAGE_PERMISSION_APPS: {
                 permissionName = getIntent().getStringExtra(Intent.EXTRA_PERMISSION_NAME);

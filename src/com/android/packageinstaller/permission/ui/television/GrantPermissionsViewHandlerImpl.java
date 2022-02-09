@@ -105,6 +105,14 @@ public final class GrantPermissionsViewHandlerImpl implements GrantPermissionsVi
         }
     }
 
+    // Cta Feature: Override updateUi interface
+    @Override
+    public void updateUi(String groupName, int groupCount, int groupIndex, Icon icon,
+                         CharSequence message, String[] revokePemissions, CharSequence detailMessage, CharSequence[] buttonLabels) {
+        //empty
+    }
+    // @}
+
     @Override
     public void saveInstanceState(Bundle outState) {
         outState.putString(ARG_GROUP_NAME, mGroupName);

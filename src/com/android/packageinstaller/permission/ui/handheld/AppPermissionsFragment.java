@@ -59,6 +59,10 @@ import java.text.Collator;
 import java.util.ArrayList;
 import java.util.Random;
 
+// CTA Feature: Change three point to text in menu. @{
+import android.cta.PermissionUtils;
+// @}
+
 /**
  * Show and manage permission groups for an app.
  *
@@ -167,7 +171,13 @@ public final class AppPermissionsFragment extends SettingsWithLargeHeader {
     @Override
     public void onCreateOptionsMenu(Menu menu, MenuInflater inflater) {
         super.onCreateOptionsMenu(menu, inflater);
-        menu.add(Menu.NONE, MENU_ALL_PERMS, Menu.NONE, R.string.all_permissions);
+        // CTA Feature: using text label to replace of three point @{
+        if (PermissionUtils.isCtaFeatureSupported()) {
+            menu.add(Menu.NONE, MENU_ALL_PERMS, Menu.NONE, R.string.all_permissions).setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        } else {
+            menu.add(Menu.NONE, MENU_ALL_PERMS, Menu.NONE, R.string.all_permissions);
+        }
+        // @}
         HelpUtils.prepareHelpMenuItem(getActivity(), menu, R.string.help_app_permissions,
                 getClass().getName());
     }

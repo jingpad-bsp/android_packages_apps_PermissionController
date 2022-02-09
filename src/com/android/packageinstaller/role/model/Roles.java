@@ -40,6 +40,11 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
+// CTA Feature: add send mms permission to sms role @{
+import android.cta.PermissionUtils;
+// @}
+
+
 /**
  * Provides access to all the {@link Role} definitions.
  */
@@ -128,7 +133,15 @@ public class Roles {
 
     @NonNull
     private static ArrayMap<String, Role> load(@NonNull Context context) {
-        try (XmlResourceParser parser = context.getResources().getXml(R.xml.roles)) {
+        // CTA Feature: add send mms permission to sms role @{
+        int xmlId = 0;
+        if (PermissionUtils.isCtaFeatureSupported()) {
+            xmlId = R.xml.cta_roles;
+        } else {
+            xmlId = R.xml.roles;
+        }
+
+        try (XmlResourceParser parser = context.getResources().getXml(xmlId)) {// @}
             Pair<ArrayMap<String, PermissionSet>, ArrayMap<String, Role>> xml = parseXml(parser);
             if (xml == null) {
                 return new ArrayMap<>();

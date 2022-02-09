@@ -58,6 +58,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
+// CTA Feature: Review Permissions UI @{
+import android.cta.PermissionUtils;
+import com.android.packageinstaller.permission.cta.CtaPermissionPlus;
+import android.widget.LinearLayout;
+// @}
+
 /**
  * If an app does not support runtime permissions the user is prompted via this fragment to select
  * which permissions to grant to the app before first use and if an update changed the permissions.
@@ -75,6 +81,9 @@ public final class ReviewPermissionsFragment extends PreferenceFragmentCompat
     private Button mContinueButton;
     private Button mCancelButton;
     private Button mMoreInfoButton;
+    // CTA Feature: Review Permissions UI @{
+    private LinearLayout mLinearLayout;
+    // @}
 
     private PreferenceCategory mNewPermissionsCategory;
     private PreferenceCategory mCurrentPermissionsCategory;
@@ -123,6 +132,9 @@ public final class ReviewPermissionsFragment extends PreferenceFragmentCompat
             confirmPermissionsReview();
             activity.finish();
         }
+        if (PermissionUtils.isCtaFeatureSupported()) {
+            CtaPermissionPlus.initCtaPermState(getContext(), mAppPermissions, null);
+        }
     }
 
     @Override
@@ -134,6 +146,13 @@ public final class ReviewPermissionsFragment extends PreferenceFragmentCompat
     public void onViewCreated(@NonNull View view, Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
         bindUi();
+        // CTA Feature: Show review permissions ui when returing to review ui interface @{
+        if (PermissionUtils.isCtaFeatureSupported()) {
+            if (View.GONE == mLinearLayout.getVisibility()) {
+                mLinearLayout.setVisibility(View.VISIBLE);
+            }
+        }
+        // @}
     }
 
     @Override
@@ -150,7 +169,13 @@ public final class ReviewPermissionsFragment extends PreferenceFragmentCompat
             return;
         }
         if (view == mContinueButton) {
-            confirmPermissionsReview();
+            // CTA Feature: Confirm permissions @{
+            if (PermissionUtils.isCtaFeatureSupported()) {
+                confirmCtaPermissionsReview();
+            } else {
+                confirmPermissionsReview();
+            }
+            // @}
             executeCallback(true);
         } else if (view == mCancelButton) {
             executeCallback(false);
@@ -162,9 +187,20 @@ public final class ReviewPermissionsFragment extends PreferenceFragmentCompat
             intent.putExtra(Intent.EXTRA_USER, UserHandle.getUserHandleForUid(
                     mAppPermissions.getPackageInfo().applicationInfo.uid));
             intent.putExtra(ManagePermissionsActivity.EXTRA_ALL_PERMISSIONS, true);
+            if (PermissionUtils.isCtaFeatureSupported()) {
+                intent.putExtra("more_infobutton", true);
+            }
             getActivity().startActivity(intent);
         }
-        activity.finish();
+        // CTA Feature: reviewUI mMoreInfoButton can return @{
+        if (!PermissionUtils.isCtaFeatureSupported()) {
+            activity.finish();
+        } else {
+            if (view != mMoreInfoButton) {
+                activity.finish();
+            }
+        }
+        // @}
     }
 
     private void grantReviewedPermission(AppPermissionGroup group) {
@@ -196,6 +232,11 @@ public final class ReviewPermissionsFragment extends PreferenceFragmentCompat
 
         for (int groupNum = 0; groupNum < preferenceGroupCount; groupNum++) {
             final PreferenceGroup preferenceGroup = preferenceGroups.get(groupNum);
+
+            //*UNISOC: 1115005 fix crash with nullpointException
+            if(null == preferenceGroup) {
+                continue;
+            }
 
             final int preferenceCount = preferenceGroup.getPreferenceCount();
             for (int prefNum = 0; prefNum < preferenceCount; prefNum++) {
@@ -291,7 +332,14 @@ public final class ReviewPermissionsFragment extends PreferenceFragmentCompat
         mCancelButton = getActivity().requireViewById(R.id.cancel_button);
         mCancelButton.setOnClickListener(this);
 
-        if (activity.getPackageManager().arePermissionsIndividuallyControlled()) {
+        // CTA Feature: Add cta_review_linearlayout to hide the reviewUI button @{
+        if (PermissionUtils.isCtaFeatureSupported()) {
+            mLinearLayout = (LinearLayout) getActivity().requireViewById(R.id.review_linearlayout);
+        }
+        // @}
+
+        // CTA Feature: Add mMoreInfoButton to display allpermissions @{
+        if (activity.getPackageManager().arePermissionsIndividuallyControlled() || PermissionUtils.isCtaFeatureSupported()) {
             mMoreInfoButton = getActivity().requireViewById(
                     R.id.permission_more_info_button);
             mMoreInfoButton.setOnClickListener(this);
@@ -341,7 +389,13 @@ public final class ReviewPermissionsFragment extends PreferenceFragmentCompat
 
             PermissionReviewPreference preference = getPreference(group.getName());
             if (preference == null) {
-                preference = new PermissionReviewPreference(this, group, this);
+                // CTA Feature: Add mLinearLayout to hide the reviewUI button @{
+                if (!PermissionUtils.isCtaFeatureSupported()) {
+                    preference = new PermissionReviewPreference(this, group, this);
+                } else {
+                    preference = new PermissionReviewPreference(this, group, this, mLinearLayout);
+                }
+                // @}
 
                 preference.setKey(group.getName());
                 Drawable icon = Utils.loadDrawable(activity.getPackageManager(),
@@ -470,6 +524,16 @@ public final class ReviewPermissionsFragment extends PreferenceFragmentCompat
             updateUi();
         }
 
+        // CTA Feature: Add layoutView to hide the reviewUI button @{
+        PermissionReviewPreference(PreferenceFragmentCompat fragment, AppPermissionGroup group,
+                                   PermissionPreferenceChangeListener callbacks, LinearLayout layoutView) {
+            super(fragment, group, callbacks, 0, layoutView);
+
+            mGroup = group;
+            updateUi();
+        }
+        // @}
+
         AppPermissionGroup getGroup() {
             return mGroup;
         }
@@ -495,18 +559,98 @@ public final class ReviewPermissionsFragment extends PreferenceFragmentCompat
             if (mGroup == null) {
                 return;
             }
+            // CTA Feature: review ui @{
+            if (PermissionUtils.isCtaFeatureSupported()) {
+                super.updateCtaUi();
+            } else {
+                super.updateUi();
 
-            super.updateUi();
-
-            if (isEnabled()) {
-                if (mGroup.isReviewRequired() && !mWasChanged) {
-                    setSummary(mGroup.getDescription());
-                    setCheckedOverride(true);
-                } else if (TextUtils.isEmpty(getSummary())) {
-                    // Sometimes the summary is already used, e.g. when this for a
-                    // foreground/background group. In this case show leave the original summary.
-                    setSummary(mGroup.getDescription());
+                if (isEnabled()) {
+                    if (mGroup.isReviewRequired() && !mWasChanged) {
+                        setSummary(mGroup.getDescription());
+                        setCheckedOverride(true);
+                    } else if (TextUtils.isEmpty(getSummary())) {
+                        // Sometimes the summary is already used, e.g. when this for a
+                        // foreground/background group. In this case show leave the original summary.
+                        setSummary(mGroup.getDescription());
+                    }
                 }
+            }
+            // @}
+        }
+    }
+
+    private void confirmCtaPermissionsReview() {
+        final List<PreferenceGroup> preferenceGroups = new ArrayList<>();
+        if (mNewPermissionsCategory != null) {
+            preferenceGroups.add(mNewPermissionsCategory);
+            preferenceGroups.add(mCurrentPermissionsCategory);
+        } else {
+            preferenceGroups.add(getPreferenceScreen());
+        }
+
+        final int preferenceGroupCount = preferenceGroups.size();
+        for (int groupNum = 0; groupNum < preferenceGroupCount; groupNum++) {
+            final PreferenceGroup preferenceGroup = preferenceGroups.get(groupNum);
+            if (preferenceGroup == null) {
+                continue;
+            }
+
+            final int preferenceCount = preferenceGroup.getPreferenceCount();
+            for (int prefNum = 0; prefNum < preferenceCount; prefNum++) {
+                Preference preference = preferenceGroup.getPreference(prefNum);
+                if (preference instanceof PermissionReviewPreference) {
+                    PermissionReviewPreference permPreference = (PermissionReviewPreference) preference;
+                    AppPermissionGroup group = permPreference.getGroup();
+                    String[] permissionsToGrant = null;
+                    final int permissionCount = group.getPermissions().size();
+                    for (int j = 0; j < permissionCount; j++) {
+                        final Permission permission = group.getPermissions().get(j);
+                        String[] filterPermissions = new String[]{permission.getName()};
+                        boolean grant = CtaPermissionPlus.isPermGrantedForReviewUI(permission);
+                        if (grant) {
+                            //androidR:
+                            //group.grantRuntimePermissions(true, false, filterPermissions);
+                            //androidQ:
+                            group.grantRuntimePermissions(true, filterPermissions);
+                        } else {
+                            group.revokeRuntimePermissions(false, filterPermissions);
+                        }
+                    }
+                    AppPermissionGroup backgroundGroup = group.getBackgroundPermissions();
+                    if (backgroundGroup != null) {
+                        for (Permission permission : backgroundGroup.getPermissions()) {
+                            String[] filterPermissions = new String[]{permission.getName()};
+                            boolean grant = CtaPermissionPlus.isPermGrantedForReviewUI(permission);
+                            if (grant) {
+                                //androidR:
+                                //backgroundGroup.grantRuntimePermissions(true, false, filterPermissions);
+                                //androidQ:
+                                backgroundGroup.grantRuntimePermissions(true, filterPermissions);
+                            } else {
+                                backgroundGroup.revokeRuntimePermissions(false, filterPermissions);
+                            }
+                        }
+                    }
+                    group.unsetReviewRequired();
+                }
+            }
+        }
+        mAppPermissions.persistChanges(true);
+
+        // Some permission might be restricted and hence there is no AppPermissionGroup for it.
+        // Manually unset all review-required flags, regardless of restriction.
+        PackageManager pm = getContext().getPackageManager();
+        PackageInfo pkg = mAppPermissions.getPackageInfo();
+        UserHandle user = UserHandle.getUserHandleForUid(pkg.applicationInfo.uid);
+
+        for (String perm : pkg.requestedPermissions) {
+            try {
+                pm.updatePermissionFlags(perm, pkg.packageName, FLAG_PERMISSION_REVIEW_REQUIRED,
+                        0, user);
+            } catch (IllegalArgumentException e) {
+                Log.e(LOG_TAG, "Cannot unmark " + perm + " requested by " + pkg.packageName
+                        + " as review required", e);
             }
         }
     }

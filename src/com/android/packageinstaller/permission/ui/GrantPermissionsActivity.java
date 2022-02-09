@@ -46,6 +46,7 @@ import android.content.res.Resources;
 import android.graphics.drawable.Icon;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemProperties;
 import android.os.UserHandle;
 import android.permission.PermissionManager;
 import android.text.Html;
@@ -76,6 +77,10 @@ import com.android.permissioncontroller.R;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+// CTA Feature: Add Runtime Permission Plus@{
+import android.cta.PermissionUtils;
+import com.android.packageinstaller.permission.cta.CtaPermissionPlus;
+// @}
 
 public class GrantPermissionsActivity extends Activity
         implements GrantPermissionsViewHandler.ResultListener {
@@ -268,6 +273,8 @@ public class GrantPermissionsActivity extends Activity
         // Cache this as this can only read on onCreate, not later.
         mCallingPackage = getCallingPackage();
 
+        SafetyNetLogger.logIfHasUndefinedPermissionGroup(getPackageManager(), mCallingPackage);
+
         setFinishOnTouchOutside(false);
 
         setTitle(R.string.permission_request_title);
@@ -346,8 +353,14 @@ public class GrantPermissionsActivity extends Activity
 
                     continue;
                 }
-
-                addRequestedPermissions(group, affectedPermissions.get(i), icicle == null);
+                // CTA Feature: If group is requested by CTA
+                // it will be add to permissions requested by cta.  @{
+                if (!PermissionUtils.isCtaFeatureSupported() || CtaPermissionPlus.filterGroupPermission(group.getName())) {
+                    addRequestedPermissions(group, affectedPermissions.get(i), icicle == null);
+                } else {
+                    addCtaRequestedPermissions(group, affectedPermissions.get(i), icicle == null);
+                }
+                // @}
             }
         }
 
@@ -584,6 +597,11 @@ public class GrantPermissionsActivity extends Activity
     }
 
     private boolean showNextPermissionGroupGrantRequest() {
+        // CTA Feature: show next dialog for granting permission @{
+        if (PermissionUtils.isCtaFeatureSupported()) {
+            return showCtaNextPermissionGroupGrantRequest();
+        }
+        // @}
         int numGroupStates = mRequestGrantPermissionGroups.size();
         int numGrantRequests = 0;
         for (int i = 0; i < numGroupStates; i++) {
@@ -708,8 +726,21 @@ public class GrantPermissionsActivity extends Activity
                 // Set the permission message as the title so it can be announced.
                 setTitle(message);
 
-                mViewHandler.updateUi(groupState.mGroup.getName(), numGrantRequests, currentIndex,
+                /*UNISOC: 1106446 disable runtimepermission dialog and grant permissions in background for test {@ */
+                if ((!"user".equals(Build.TYPE) && SystemProperties.get("persist.support.test").equals("true"))
+                        || SystemProperties.get("persist.support.securetest").equals("1")) {
+                    if ((groupState != null) && (groupState.mGroup != null)) {
+                        groupState.mGroup.grantRuntimePermissions(false);
+                        groupState.mState = GroupState.STATE_ALLOWED;
+                        if (!showNextPermissionGroupGrantRequest()) {
+                            setResultAndFinish();
+                        }
+                    }
+                } else {
+                /* @} */
+                    mViewHandler.updateUi(groupState.mGroup.getName(), numGrantRequests, currentIndex,
                         icon, message, detailMessage, mButtonLabels);
+                }
 
                 return true;
             }
@@ -1032,5 +1063,268 @@ public class GrantPermissionsActivity extends Activity
                 updateIfPermissionsWereGranted();
             }
         }
+    }
+
+
+
+    /**
+     * UNISOC: CTA Feature:
+     * Add addCtaRequestedPermissions to distinguish between android and cta modifications
+     *
+     * @param group           The group the permission belongs to (might be a background permission group)
+     * @param permName        The name of the permission to add
+     * @param isFirstInstance Is this the first time the groupStates get created
+     */
+    private void addCtaRequestedPermissions(AppPermissionGroup group, String permName,
+                                            boolean isFirstInstance) {
+        if (!group.isGrantingAllowed()) {
+            reportRequestResult(permName,
+                    PERMISSION_GRANT_REQUEST_RESULT_REPORTED__RESULT__IGNORED);
+            // Skip showing groups that we know cannot be granted.
+            return;
+        }
+
+        if (group.areRuntimePermissionsGranted(new String[]{permName})) {
+            return;
+        }
+
+        Permission permission = group.getPermission(permName);
+
+        // If the permission is restricted it does not show in the UI and
+        // is not added to the group at all, so check that first.
+        if (permission == null && ArrayUtils.contains(
+                mAppPermissions.getPackageInfo().requestedPermissions, permName)) {
+            reportRequestResult(permName,
+                    PERMISSION_GRANT_REQUEST_RESULT_REPORTED__RESULT__IGNORED_RESTRICTED_PERMISSION);
+            return;
+            // We allow the user to choose only non-fixed permissions. A permission
+            // is fixed either by device policy or the user denying with prejudice.
+        } else if (group.isUserFixed()) {
+            reportRequestResult(permName,
+                    PERMISSION_GRANT_REQUEST_RESULT_REPORTED__RESULT__IGNORED_USER_FIXED);
+            return;
+        } else if (group.isPolicyFixed() && !group.areRuntimePermissionsGranted()
+                || permission.isPolicyFixed()) {
+            reportRequestResult(permName,
+                    PERMISSION_GRANT_REQUEST_RESULT_REPORTED__RESULT__IGNORED_POLICY_FIXED);
+            return;
+        }
+
+        Pair<String, Boolean> groupKey = new Pair<>(group.getName(),
+                group.isBackgroundGroup());
+
+        GroupState state = mRequestGrantPermissionGroups.get(groupKey);
+        if (state == null) {
+            state = new GroupState(group);
+            mRequestGrantPermissionGroups.put(groupKey, state);
+        }
+        state.affectedPermissions = ArrayUtils.appendString(
+                state.affectedPermissions, permName);
+
+        boolean skipGroup = false;
+        switch (getPermissionPolicy()) {
+            case DevicePolicyManager.PERMISSION_POLICY_AUTO_GRANT: {
+                final String[] filterPermissions = new String[]{permName};
+                group.grantRuntimePermissions(false, filterPermissions);
+                group.setPolicyFixed(filterPermissions);
+                state.mState = GroupState.STATE_ALLOWED;
+                skipGroup = true;
+
+                reportRequestResult(permName,
+                        PERMISSION_GRANT_REQUEST_RESULT_REPORTED__RESULT__AUTO_GRANTED);
+            }
+            break;
+
+            case DevicePolicyManager.PERMISSION_POLICY_AUTO_DENY: {
+                final String[] filterPermissions = new String[]{permName};
+                group.setPolicyFixed(filterPermissions);
+                state.mState = GroupState.STATE_DENIED;
+                skipGroup = true;
+
+                reportRequestResult(permName,
+                        PERMISSION_GRANT_REQUEST_RESULT_REPORTED__RESULT__AUTO_DENIED);
+            }
+            break;
+
+            default:
+                break;
+        }
+
+        if (skipGroup && isFirstInstance) {
+            // Only allow to skip groups when this is the first time the dialog was created.
+            // Otherwise the number of groups changes between instances of the dialog.
+            state.mState = GroupState.STATE_SKIPPED;
+        }
+    }
+
+    /**
+     * UNISOC: CTA Feature:
+     * Add showCtaNextPermissionGroupGrantRequest to distinguish between android and cta modifications
+     */
+    private boolean showCtaNextPermissionGroupGrantRequest() {
+        int numGroupStates = mRequestGrantPermissionGroups.size();
+        int numGrantRequests = 0;
+        for (int i = 0; i < numGroupStates; i++) {
+            if (shouldShowRequestForGroupState(mRequestGrantPermissionGroups.valueAt(i))) {
+                numGrantRequests++;
+            }
+        }
+
+        int currentIndex = 0;
+        for (GroupState groupState : mRequestGrantPermissionGroups.values()) {
+            if (!shouldShowRequestForGroupState(groupState)) {
+                continue;
+            }
+
+            if (groupState.mState == GroupState.STATE_UNKNOWN) {
+                GroupState foregroundGroupState;
+                GroupState backgroundGroupState;
+                if (groupState.mGroup.isBackgroundGroup()) {
+                    backgroundGroupState = groupState;
+                    foregroundGroupState = getForegroundGroupState(groupState.mGroup.getName());
+                } else {
+                    foregroundGroupState = groupState;
+                    backgroundGroupState = getBackgroundGroupState(groupState.mGroup.getName());
+                }
+
+                CharSequence appLabel = mAppPermissions.getAppLabel();
+
+                Icon icon;
+                try {
+                    icon = Icon.createWithResource(groupState.mGroup.getIconPkg(),
+                            groupState.mGroup.getIconResId());
+                } catch (Resources.NotFoundException e) {
+                    Log.e(LOG_TAG, "Cannot load icon for group" + groupState.mGroup.getName(), e);
+                    icon = null;
+                }
+
+                // If no background permissions are granted yet, we need to ask for background
+                // permissions
+                boolean needBackgroundPermission = false;
+                boolean isBackgroundPermissionUserSet = false;
+                if (backgroundGroupState != null) {
+                    if (!backgroundGroupState.mGroup.areRuntimePermissionsGranted()) {
+                        needBackgroundPermission = true;
+                        isBackgroundPermissionUserSet = backgroundGroupState.mGroup.isUserSet();
+                    }
+                }
+
+                // If no foreground permissions are granted yet, we need to ask for foreground
+                // permissions
+                boolean needForegroundPermission = false;
+                boolean isForegroundPermissionUserSet = false;
+
+                if (CtaPermissionPlus.filterGroupPermission(groupState.mGroup.getName())) {
+                    if (foregroundGroupState != null) {
+                        if (!foregroundGroupState.mGroup.areRuntimePermissionsGranted()) {
+                            needForegroundPermission = true;
+                            isForegroundPermissionUserSet = foregroundGroupState.mGroup.isUserSet();
+                        }
+                    }
+                } else {
+                    if (foregroundGroupState != null) {
+                        if (!foregroundGroupState.mGroup.areRuntimePermissionsGranted(groupState.affectedPermissions)) {
+                            needForegroundPermission = true;
+                            isForegroundPermissionUserSet = foregroundGroupState.mGroup.isUserSet();
+                        }
+                    }
+                }
+
+
+                // The button doesn't show when its label is null
+                mButtonLabels = new CharSequence[NUM_BUTTONS];
+                mButtonLabels[LABEL_ALLOW_BUTTON] = getString(R.string.grant_dialog_button_allow);
+                mButtonLabels[LABEL_ALLOW_ALWAYS_BUTTON] = null;
+                mButtonLabels[LABEL_ALLOW_FOREGROUND_BUTTON] = null;
+                mButtonLabels[LABEL_DENY_BUTTON] = getString(R.string.grant_dialog_button_deny);
+                if (isForegroundPermissionUserSet || isBackgroundPermissionUserSet) {
+                    mButtonLabels[LABEL_DENY_AND_DONT_ASK_AGAIN_BUTTON] =
+                            getString(R.string.grant_dialog_button_deny_and_dont_ask_again);
+                } else {
+                    mButtonLabels[LABEL_DENY_AND_DONT_ASK_AGAIN_BUTTON] = null;
+                }
+
+                int messageId;
+                int detailMessageId = 0;
+                if (needForegroundPermission) {
+                    messageId = groupState.mGroup.getRequest();
+
+                    if (groupState.mGroup.hasPermissionWithBackgroundMode()) {
+                        mButtonLabels[LABEL_ALLOW_BUTTON] = null;
+                        mButtonLabels[LABEL_ALLOW_FOREGROUND_BUTTON] =
+                                getString(R.string.grant_dialog_button_allow_foreground);
+                        if (needBackgroundPermission) {
+                            mButtonLabels[LABEL_ALLOW_ALWAYS_BUTTON] =
+                                    getString(R.string.grant_dialog_button_allow_always);
+                            if (isForegroundPermissionUserSet || isBackgroundPermissionUserSet) {
+                                mButtonLabels[LABEL_DENY_BUTTON] = null;
+                            }
+                        }
+                    } else {
+                        detailMessageId = groupState.mGroup.getRequestDetail();
+                    }
+                } else {
+                    if (needBackgroundPermission) {
+                        messageId = groupState.mGroup.getBackgroundRequest();
+                        detailMessageId = groupState.mGroup.getBackgroundRequestDetail();
+                        mButtonLabels[LABEL_ALLOW_BUTTON] =
+                                getString(R.string.grant_dialog_button_allow_background);
+                        mButtonLabels[LABEL_DENY_BUTTON] =
+                                getString(R.string.grant_dialog_button_deny_background);
+                        mButtonLabels[LABEL_DENY_AND_DONT_ASK_AGAIN_BUTTON] =
+                                getString(R.string
+                                        .grant_dialog_button_deny_background_and_dont_ask_again);
+                    } else {
+                        // Not reached as the permissions should be auto-granted
+                        return false;
+                    }
+                }
+
+                CharSequence message = getRequestMessage(appLabel, groupState.mGroup, this,
+                        messageId);
+
+                Spanned detailMessage = null;
+                if (detailMessageId != 0) {
+                    try {
+                        detailMessage = Html.fromHtml(
+                                getPackageManager().getResourcesForApplication(
+                                        groupState.mGroup.getDeclaringPackage()).getString(
+                                        detailMessageId), 0);
+                    } catch (NameNotFoundException ignored) {
+                    }
+                }
+
+                // Set the permission message as the title so it can be announced.
+                setTitle(message);
+
+                /*UNISOC: 1106446 disable runtimepermission dialog and grant permissions in background for test {@ */
+                if (!"user".equals(Build.TYPE) && SystemProperties.get("persist.support.test").equals("true")) {
+                    if ((groupState != null) && (groupState.mGroup != null)) {
+                        groupState.mGroup.grantRuntimePermissions(false);
+                        groupState.mState = GroupState.STATE_ALLOWED;
+                        if (!showCtaNextPermissionGroupGrantRequest()) {
+                            setResultAndFinish();
+                        }
+                    }
+                } else {
+                    /* @} */
+                    if (CtaPermissionPlus.filterGroupPermission(groupState.mGroup.getName())) {
+                        mViewHandler.updateUi(groupState.mGroup.getName(), numGrantRequests, currentIndex,
+                                icon, message, detailMessage, mButtonLabels);
+                    } else {
+                        mViewHandler.updateUi(groupState.mGroup.getName(), numGrantRequests, currentIndex,
+                                icon, message, groupState.affectedPermissions, detailMessage, mButtonLabels);
+                    }
+                }
+
+                return true;
+            }
+
+            if (groupState.mState != GroupState.STATE_SKIPPED) {
+                currentIndex++;
+            }
+        }
+
+        return false;
     }
 }

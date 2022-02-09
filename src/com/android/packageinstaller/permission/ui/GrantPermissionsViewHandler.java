@@ -80,6 +80,26 @@ public interface GrantPermissionsViewHandler {
             CharSequence message, CharSequence detailMessage, CharSequence[] buttonLabels);
 
     /**
+     * UNISOC: CTA Feature:
+     * Updates the view hierarchy to reflect the specified state.
+     * <p>
+     * Note that this must be called at least once before showing the UI to
+     * the user to properly initialize the UI.
+     *
+     * @param groupName the name of the permission group
+     * @param groupCount the total number of groups that are being requested
+     * @param groupIndex the index of the current group being requested
+     * @param icon the icon representation of the current group
+     * @param message the message to display the user
+     * @param revokePermissions the message to display the revoke permissions
+     * @param detailMessage another message to display to the user. ThiSystem.outs clarifies "message" in more
+     *                      detail
+     * @param buttonLabels labels for each button. Use null to make the button gone
+     */
+    void updateUi(String groupName, int groupCount, int groupIndex, Icon icon,
+                  CharSequence message, String[] revokePermissions, CharSequence detailMessage, CharSequence[] buttonLabels);
+
+    /**
      * Sets the result listener that will be notified when the user responds
      * to a permissions grant request.
      */

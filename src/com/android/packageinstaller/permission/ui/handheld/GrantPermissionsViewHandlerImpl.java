@@ -46,6 +46,11 @@ import com.android.packageinstaller.permission.ui.GrantPermissionsViewHandler;
 import com.android.packageinstaller.permission.ui.ManagePermissionsActivity;
 import com.android.permissioncontroller.R;
 
+// CTA Feature: Add Runtime Permission Plus@{
+import com.android.packageinstaller.permission.cta.CtaPermissionPlus;
+import android.cta.PermissionUtils;
+// @}
+
 public class GrantPermissionsViewHandlerImpl implements GrantPermissionsViewHandler,
         OnClickListener {
 
@@ -56,6 +61,9 @@ public class GrantPermissionsViewHandlerImpl implements GrantPermissionsViewHand
     public static final String ARG_GROUP_MESSAGE = "ARG_GROUP_MESSAGE";
     private static final String ARG_GROUP_DETAIL_MESSAGE = "ARG_GROUP_DETAIL_MESSAGE";
     private static final String ARG_DIALOG_BUTTON_LABELS = "ARG_DIALOG_BUTTON_LABELS";
+    // CTA Feature: add String to save revoke permissions @{
+    private static final String ARG_DIALOG_REVOKE_PERMISSIONS_MESSAGE= "ARG_DIALOG_REVOKE_PERMISSIONS_MESSAGE";
+    // @}
 
     // Animation parameters.
     private static final long SWITCH_TIME_MILLIS = 75;
@@ -86,6 +94,10 @@ public class GrantPermissionsViewHandlerImpl implements GrantPermissionsViewHand
     private Button mDenyButton;
     private Button mDenyAndDontAskAgainButton;
     private ViewGroup mRootView;
+    // CTA Feature: add String/TextView to save and display revoke permissions @{
+    private String[] mRevokePemissions;
+    private TextView mRevokePemissionView;
+    // @}
 
     public GrantPermissionsViewHandlerImpl(Activity activity, String appPackageName,
             @NonNull UserHandle userHandle) {
@@ -109,7 +121,11 @@ public class GrantPermissionsViewHandlerImpl implements GrantPermissionsViewHand
         arguments.putCharSequence(ARG_GROUP_MESSAGE, mGroupMessage);
         arguments.putCharSequence(ARG_GROUP_DETAIL_MESSAGE, mDetailMessage);
         arguments.putCharSequenceArray(ARG_DIALOG_BUTTON_LABELS, mButtonLabels);
-
+        // CTA Feature: add String to save revoke permissions @{
+        if(PermissionUtils.isCtaFeatureSupported()) {
+            arguments.putStringArray(ARG_DIALOG_REVOKE_PERMISSIONS_MESSAGE, mRevokePemissions);
+        }
+        // @}
     }
 
     @Override
@@ -121,6 +137,11 @@ public class GrantPermissionsViewHandlerImpl implements GrantPermissionsViewHand
         mGroupIndex = savedInstanceState.getInt(ARG_GROUP_INDEX);
         mDetailMessage = savedInstanceState.getCharSequence(ARG_GROUP_DETAIL_MESSAGE);
         mButtonLabels = savedInstanceState.getCharSequenceArray(ARG_DIALOG_BUTTON_LABELS);
+        // CTA Feature: get revoke permissions @{
+        if(PermissionUtils.isCtaFeatureSupported()) {
+            mRevokePemissions = savedInstanceState.getStringArray(ARG_DIALOG_REVOKE_PERMISSIONS_MESSAGE);
+        }
+        // @}
 
         updateAll();
     }
@@ -137,6 +158,30 @@ public class GrantPermissionsViewHandlerImpl implements GrantPermissionsViewHand
         mGroupMessage = message;
         mDetailMessage = detailMessage;
         mButtonLabels = buttonLabels;
+        // CTA Feature: set sub-permission container is null@{
+        mRevokePemissions = null;
+        // @}
+
+        // If this is a second (or later) permission and the views exist, then animate.
+        if (mIconView != null) {
+            updateAll();
+        }
+    }
+
+    // CTA Feature: add String to save revoke permissions @{
+    @Override
+    public void updateUi(String groupName, int groupCount, int groupIndex, Icon icon,
+                         CharSequence message, String[] revokePemissions, CharSequence detailMessage, CharSequence[] buttonLabels) {
+        boolean isNewGroup = mGroupIndex != groupIndex;
+
+        mGroupName = groupName;
+        mGroupCount = groupCount;
+        mGroupIndex = groupIndex;
+        mGroupIcon = icon;
+        mGroupMessage = message;
+        mRevokePemissions = revokePemissions;
+        mDetailMessage = detailMessage;
+        mButtonLabels = buttonLabels;
 
         // If this is a second (or later) permission and the views exist, then animate.
         if (mIconView != null) {
@@ -149,6 +194,16 @@ public class GrantPermissionsViewHandlerImpl implements GrantPermissionsViewHand
         updateDetailDescription();
         updateButtons();
 
+        // CTA Feature: update Permissions textView @{
+        if(PermissionUtils.isCtaFeatureSupported()) {
+            if (mRevokePemissions != null) {
+                CtaPermissionPlus.updateDisplayRevokePermissions(mActivity, mRevokePemissions, mRevokePemissionView);
+            } else {
+                mRevokePemissionView.setVisibility(View.GONE);
+            }
+        }
+        // @}
+
 //      Animate change in size
 //      Grow or shrink the content container to size of new content
         ChangeBounds growShrinkToNewContentSize = new ChangeBounds();
@@ -160,8 +215,16 @@ public class GrantPermissionsViewHandlerImpl implements GrantPermissionsViewHand
 
     @Override
     public View createView() {
-        mRootView = (ViewGroup) LayoutInflater.from(mActivity)
-                .inflate(R.layout.grant_permissions, null);
+        // CTA Feature: add TextView to display revoke permissions @{
+        if(!PermissionUtils.isCtaFeatureSupported()) {
+            mRootView = (ViewGroup) LayoutInflater.from(mActivity)
+                    .inflate(R.layout.grant_permissions, null);
+        } else {
+            mRootView = (ViewGroup) LayoutInflater.from(mActivity)
+                    .inflate(R.layout.cta_grant_permissions, null);
+            mRevokePemissionView = (TextView) mRootView.findViewById(R.id.display_revoke_permission);
+        }
+        // @}
 
         int h = mActivity.getResources().getDisplayMetrics().heightPixels;
         mRootView.setMinimumHeight(h);

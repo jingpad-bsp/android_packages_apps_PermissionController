@@ -105,6 +105,14 @@ final class GrantPermissionsWatchViewHandler implements GrantPermissionsViewHand
         showDialog(null);
     }
 
+    // Cta Feature: Override updateUi interface
+    @Override
+    public void updateUi(String groupName, int groupCount, int groupIndex, Icon icon,
+                         CharSequence message, String[] revokePemissions, CharSequence detailMessage, CharSequence[] buttonLabels) {
+        //empty
+    }
+    // @}
+
     private void showDialog(Bundle savedInstanceState) {
         TypedArray a = mContext.obtainStyledAttributes(
                 new int[] { android.R.attr.textColorPrimary });

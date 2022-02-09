@@ -32,6 +32,10 @@ import com.android.packageinstaller.permission.ui.handheld.ReviewPermissionsFrag
 import com.android.packageinstaller.permission.ui.wear.ReviewPermissionsWearFragment;
 import com.android.permissioncontroller.R;
 
+// CTA Feature: Review Permissions UI @{
+import android.cta.PermissionUtils;
+// @}
+
 public final class ReviewPermissionsActivity extends FragmentActivity
         implements OnActionConfirmedListener {
 
@@ -50,7 +54,13 @@ public final class ReviewPermissionsActivity extends FragmentActivity
             getSupportFragmentManager().beginTransaction()
                     .replace(android.R.id.content, fragment).commit();
         } else {
-            setContentView(R.layout.review_permissions);
+            // CTA Feature: Review Permissions UI @{
+            if (!PermissionUtils.isCtaFeatureSupported()) {
+                setContentView(R.layout.review_permissions);
+            } else {
+                setContentView(R.layout.cta_review_permissions);
+            }
+            // @}
             if (getSupportFragmentManager().findFragmentById(R.id.preferences_frame) == null) {
                 getSupportFragmentManager().beginTransaction().add(R.id.preferences_frame,
                         ReviewPermissionsFragment.newInstance(packageInfo)).commit();
